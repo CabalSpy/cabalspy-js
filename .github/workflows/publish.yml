@@ -1,0 +1,29 @@
+# Publishes the package to npm whenever a GitHub release is created.
+# The build runs here, not on your machine.
+# Adds the provenance attestation, the verified-origin badge on the npm page.
+# Requires a repository secret named NPM_TOKEN (npm Automation token).
+name: publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write # required for --provenance (OIDC)
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
