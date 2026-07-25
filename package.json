@@ -1,0 +1,90 @@
+{
+  "name": "cabalspy",
+  "version": "0.1.0",
+  "description": "KOL and smart money wallet tracking API for Solana, Base, BNB Chain, Ethereum and Robinhood Chain. Realtime KOL trades, whale wallets, copy-trading signals, bundle detection, token holders and PnL over REST and WebSocket.",
+  "keywords": [
+    "cabalspy",
+    "kol",
+    "kol-api",
+    "kol-tracker",
+    "kol-wallets",
+    "key-opinion-leader",
+    "smart-money",
+    "whale-tracker",
+    "wallet-tracker",
+    "copy-trading",
+    "trading-signals",
+    "onchain-data",
+    "onchain-analytics",
+    "pnl",
+    "token-api",
+    "data-api",
+    "memecoin",
+    "pumpfun",
+    "dex",
+    "bundle-detection",
+    "websocket",
+    "realtime",
+    "solana",
+    "base",
+    "bnb",
+    "bsc",
+    "ethereum",
+    "robinhood-chain",
+    "sdk",
+    "typescript"
+  ],
+  "license": "MIT",
+  "homepage": "https://docs.cabalspy.xyz",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOUR_ORG/cabalspy-js.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_ORG/cabalspy-js/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build",
+    "test:smoke": "node smoke-test.mjs",
+    "test:conformance": "node validate.mjs",
+    "test:mock": "node mock-all-chains.mjs --ws-wait=3"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.4.0",
+    "ws": "^8.16.0"
+  },
+  "peerDependencies": {
+    "ws": "^8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ws": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
