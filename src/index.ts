@@ -464,6 +464,35 @@ function backoffDelay(attempt: number, lastError?: CabalSpyError): number {
 //  RESOURCES
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Rejects a chain and wallet type combination the API does not have, before a
+ * request goes out.
+ *
+ * The type system already prevents this for TypeScript callers, but plain
+ * JavaScript, a value cast to `any`, or a chain read from configuration at
+ * runtime all bypass that. Without this check such a call costs credits and
+ * comes back as a 400 from the server. The Python and Rust SDKs validate the
+ * same way.
+ */
+function assertChainType(chain: string, type?: string | null): void {
+  if (!(CHAINS as readonly string[]).includes(chain)) {
+    throw new BadRequestError(`Unknown blockchain '${chain}'`, {
+      code: 'invalid_parameter',
+      parameter: 'blockchain',
+      allowed: [...CHAINS],
+    });
+  }
+  if (type == null) return;
+  const allowed = WALLET_TYPES_BY_CHAIN[chain as Chain];
+  if (!(allowed as readonly string[]).includes(type)) {
+    throw new BadRequestError(`${chain} supports only: ${allowed.join(', ')}`, {
+      code: 'invalid_parameter',
+      parameter: 'type',
+      allowed: [...allowed],
+    });
+  }
+}
+
 abstract class Resource {
   constructor(protected readonly client: CabalSpy) {}
 }
@@ -606,19 +635,23 @@ export const BATCH_MAX_ADDRESSES = 100;
 export class WalletsResource extends Resource {
   /** GET /v1/wallets — every tracked wallet for one chain and wallet type. */
   list<C extends Chain>(params: ListWalletsParams<C>): Promise<unknown> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get('/wallets', { ...params });
   }
 
   listRaw<C extends Chain>(params: ListWalletsParams<C>): Promise<Envelope<unknown>> {
+    assertChainType(params.blockchain, params.type);
     return this.client.getRaw('/wallets', { ...params });
   }
 
   /** GET /v1/wallets/history — trade history, cursor paginated. */
   history(params: WalletHistoryParams): Promise<unknown> {
+    assertChainType(params.blockchain);
     return this.client.get('/wallets/history', { ...params });
   }
 
   historyRaw(params: WalletHistoryParams): Promise<Envelope<unknown>> {
+    assertChainType(params.blockchain);
     return this.client.getRaw('/wallets/history', { ...params });
   }
 
@@ -652,20 +685,24 @@ export class WalletsResource extends Resource {
 
   /** GET /v1/wallets/leaderboard — ranking for the given period. */
   leaderboard<C extends Chain>(params: LeaderboardParams<C>): Promise<unknown> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get('/wallets/leaderboard', { ...params });
   }
 
   leaderboardRaw<C extends Chain>(params: LeaderboardParams<C>): Promise<Envelope<unknown>> {
+    assertChainType(params.blockchain, params.type);
     return this.client.getRaw('/wallets/leaderboard', { ...params });
   }
 
   /** GET /v1/wallets/tracker — period stats and open positions for one wallet. */
   tracker(params: TrackerParams): Promise<WalletTrackerResponse> {
+    assertChainType(params.blockchain);
     return this.client.get<WalletTrackerResponse>('/wallets/tracker', { ...params });
   }
 
   /** GET /v1/wallets/holdings — current onchain holdings, independent of period. */
   holdings(params: AddressParams): Promise<{ active_holdings: unknown }> {
+    assertChainType(params.blockchain);
     return this.client.get('/wallets/holdings', { ...params });
   }
 
@@ -674,16 +711,19 @@ export class WalletsResource extends Resource {
    * Note: this endpoint only exists under /wallet/, singular.
    */
   pnlCalendar(params: AddressParams): Promise<unknown> {
+    assertChainType(params.blockchain);
     return this.client.get('/wallet/pnl_calendar', { ...params });
   }
 
   /** GET /v1/wallets/connections — wallets whose traded tokens overlap, 30d window. */
   connections(params: AddressParams & { limit?: number }): Promise<unknown> {
+    assertChainType(params.blockchain);
     return this.client.get('/wallets/connections', { ...params });
   }
 
   /** POST /v1/wallets/batch — up to 100 addresses in a single request. */
   batch<C extends Chain>(params: WalletsBatchParams<C>): Promise<Record<string, unknown>> {
+    assertChainType(params.blockchain, params.type);
     if (params.addresses.length === 0) {
       throw new BadRequestError('addresses must not be empty', {
         code: 'missing_parameter',
@@ -730,10 +770,12 @@ export const BATCH_MAX_MINTS = 100;
 export class TokensResource extends Resource {
   /** GET /v1/tokens/transactions — trades by tracked wallets in this token. */
   transactions<C extends Chain>(params: TokenParams<C> & { limit?: number }): Promise<unknown> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get('/tokens/transactions', { ...params });
   }
 
   transactionsRaw<C extends Chain>(params: TokenParams<C> & { limit?: number }): Promise<Envelope<unknown>> {
+    assertChainType(params.blockchain, params.type);
     return this.client.getRaw('/tokens/transactions', { ...params });
   }
 
@@ -745,16 +787,19 @@ export class TokensResource extends Resource {
    * on Solana. tokens/holders returns them populated.
    */
   stats<C extends Chain>(params: TokenParams<C>): Promise<TokenStatsResponse> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get<TokenStatsResponse>('/tokens/stats', { ...params });
   }
 
   /** GET /v1/tokens/holders — tracked holders, sorted by balance. */
   holders<C extends Chain>(params: TokenParams<C> & { limit?: number }): Promise<unknown> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get('/tokens/holders', { ...params });
   }
 
   /** POST /v1/tokens/batch — up to 100 mints in a single request. */
   batch<C extends Chain>(params: TokensBatchParams<C>): Promise<Record<string, unknown>> {
+    assertChainType(params.blockchain, params.type);
     if (params.mints.length === 0) {
       throw new BadRequestError('mints must not be empty', {
         code: 'missing_parameter',
@@ -817,25 +862,30 @@ export const VOLUME_MAX_SECONDS = 24 * 60 * 60;
 export class TransactionsResource extends Resource {
   /** GET /v1/transactions/latest — most recent trades by tracked wallets. */
   latest<C extends Chain>(params: FeedBaseParams<C> & { limit?: number }): Promise<TransactionsListResponse> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get<TransactionsListResponse>('/transactions/latest', { ...params });
   }
 
   latestRaw<C extends Chain>(params: FeedBaseParams<C> & { limit?: number }): Promise<Envelope<unknown>> {
+    assertChainType(params.blockchain, params.type);
     return this.client.getRaw('/transactions/latest', { ...params });
   }
 
   /** GET /v1/transactions/timerange — trades in the last N, up to 60 minutes. */
   timerange<C extends Chain>(params: FeedBaseParams<C> & TimeWindow & { limit?: number }): Promise<TransactionsListResponse> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get<TransactionsListResponse>('/transactions/timerange', { ...params });
   }
 
   /** GET /v1/transactions/count — trade count and unique wallets, up to 24 hours. */
   count<C extends Chain>(params: FeedBaseParams<C> & TimeWindow): Promise<CountResult> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get<CountResult>('/transactions/count', { ...params });
   }
 
   /** GET /v1/transactions/volume — volume in native currency and USD, up to 24 hours. */
   volume<C extends Chain>(params: FeedBaseParams<C> & TimeWindow): Promise<VolumeResult> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get<VolumeResult>('/transactions/volume', { ...params });
   }
 
@@ -846,6 +896,7 @@ export class TransactionsResource extends Resource {
   feed<C extends Chain>(
     params: FeedBaseParams<C> & TimeWindow & { mode: 'latest' | 'timerange' | 'count' | 'volume'; limit?: number },
   ): Promise<unknown> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get('/feed', { ...params });
   }
 }
@@ -908,19 +959,23 @@ export class SignalsResource extends Resource {
    * smart is unavailable on eth, which has no smart money feed.
    */
   list<C extends Chain>(params: SignalsParams<C> & SignalGatedFilters): Promise<SignalsResponse<ClusterSignal>> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get<SignalsResponse<ClusterSignal>>('/signals', { ...params } as Query);
   }
 
   listRaw<C extends Chain>(params: SignalsParams<C> & SignalGatedFilters): Promise<Envelope<unknown>> {
+    assertChainType(params.blockchain, params.type);
     return this.client.getRaw('/signals', { ...params } as Query);
   }
 
   /** GET /v1/signals/history — backtest over 7, 30 or 90 days, or 'all'. */
   history<C extends Chain>(params: SignalsHistoryParams<C> & SignalGatedFilters): Promise<unknown> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get('/signals/history', { ...params } as Query);
   }
 
   historyRaw<C extends Chain>(params: SignalsHistoryParams<C> & SignalGatedFilters): Promise<Envelope<unknown>> {
+    assertChainType(params.blockchain, params.type);
     return this.client.getRaw('/signals/history', { ...params } as Query);
   }
 }
@@ -941,10 +996,12 @@ export interface AnalyticsParams<C extends Chain = Chain> {
 export class AnalyticsResource extends Resource {
   /** GET /v1/analytics — four modes, available on every chain. */
   get<C extends Chain>(params: AnalyticsParams<C>): Promise<unknown> {
+    assertChainType(params.blockchain, params.type);
     return this.client.get('/analytics', { ...params });
   }
 
   getRaw<C extends Chain>(params: AnalyticsParams<C>): Promise<Envelope<unknown>> {
+    assertChainType(params.blockchain, params.type);
     return this.client.getRaw('/analytics', { ...params });
   }
 }
