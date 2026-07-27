@@ -38,10 +38,10 @@
   "homepage": "https://docs.cabalspy.xyz",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/YOUR_ORG/cabalspy-js.git"
+    "url": "git+https://github.com/CabalSpy/cabalspy-js.git"
   },
   "bugs": {
-    "url": "https://github.com/YOUR_ORG/cabalspy-js/issues"
+    "url": "https://github.com/CabalSpy/cabalspy-js/issues"
   },
   "type": "module",
   "main": "./dist/index.cjs",
