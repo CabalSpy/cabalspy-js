@@ -1,6 +1,6 @@
 {
   "name": "cabalspy",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "KOL and smart money wallet tracking API for Solana, Base, BNB Chain, Ethereum and Robinhood Chain. Realtime KOL trades, whale wallets, copy-trading signals, bundle detection, token holders and PnL over REST and WebSocket.",
   "keywords": [
     "cabalspy",
@@ -32,7 +32,10 @@
     "ethereum",
     "robinhood-chain",
     "sdk",
-    "typescript"
+    "typescript",
+    "x402",
+    "pay-per-call",
+    "agent-payments"
   ],
   "license": "MIT",
   "homepage": "https://docs.cabalspy.xyz",
@@ -77,14 +80,22 @@
     "ws": "^8.16.0"
   },
   "peerDependencies": {
-    "ws": "^8.0.0"
+    "ws": "^8.0.0",
+    "@x402/fetch": "^2.0.0"
   },
   "peerDependenciesMeta": {
     "ws": {
+      "optional": true
+    },
+    "@x402/fetch": {
       "optional": true
     }
   },
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@x402/fetch": "^2.20.0",
+    "@x402/svm": "^2.20.0"
   }
 }
