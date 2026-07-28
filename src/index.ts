@@ -217,9 +217,9 @@ function errorFromStatus(
 export interface CabalSpyOptions {
   /** API key. Falls back to process.env.CABALSPY_API_KEY. */
   apiKey?: string;
-  /** REST base URL including /v1. Default: https://api.cabalspy.xyz/v1 */
+  /** REST base URL including /v1. Falls back to CABALSPY_BASE_URL, then the default. */
   baseUrl?: string;
-  /** WebSocket gateway. Default: wss://stream.cabalspy.xyz */
+  /** WebSocket gateway. Falls back to CABALSPY_WS_URL, then the default. */
   wsUrl?: string;
   /** Per-request timeout in milliseconds. Default: 30_000 */
   timeout?: number;
@@ -229,6 +229,29 @@ export interface CabalSpyOptions {
   headers?: Record<string, string>;
   /** Custom fetch implementation, for Node < 18, tests or proxies. */
   fetch?: typeof globalThis.fetch;
+
+  /**
+   * Pay per call instead of using an API key.
+   *
+   * Pass an x402 client configured with your signer, and every request that
+   * comes back with HTTP 402 is paid and retried automatically. No account, no
+   * key, no signup — the agent's wallet is the credential.
+   *
+   * ```ts
+   * import { wrapFetchWithPayment, x402Client } from '@x402/fetch';
+   * import { ExactSvmScheme } from '@x402/svm';
+   *
+   * const payer = new x402Client()
+   *   .register('solana:mainnet', new ExactSvmScheme(signer));
+   *
+   * const client = new CabalSpy({ payments: wrapFetchWithPayment(fetch, payer) });
+   * ```
+   *
+   * `@x402/fetch` and `@x402/svm` are optional peer dependencies; install them
+   * only if you want this. An API key still takes precedence when both are set,
+   * so an existing integration never starts spending unexpectedly.
+   */
+  payments?: typeof globalThis.fetch;
 }
 
 const DEFAULT_BASE_URL = 'https://api.cabalspy.xyz/v1';
@@ -271,6 +294,9 @@ export class CabalSpy {
   private readonly extraHeaders: Record<string, string>;
   private readonly fetchImpl: typeof globalThis.fetch;
 
+  /** True when requests are paid per call rather than authenticated by key. */
+  readonly paysPerCall: boolean = false;
+
   /** Rate limit state from the most recent request. */
   lastRateLimit: RateLimitInfo = { limit: null, remaining: null, reset: null };
 
@@ -286,15 +312,19 @@ export class CabalSpy {
     const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
     const envKey = env?.CABALSPY_API_KEY;
     const key = options.apiKey ?? envKey;
-    if (!key) {
+    if (!key && !options.payments) {
       throw new CabalSpyError(
-        'Missing API key. Pass { apiKey } or set CABALSPY_API_KEY in the environment.',
+        'Missing credentials. Pass { apiKey }, set CABALSPY_API_KEY, or pass { payments } ' +
+          'to pay per call with x402.',
         { code: 'missing_api_key' },
       );
     }
-    this.apiKey = key;
-    this.baseUrl = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
-    this.wsUrl = (options.wsUrl ?? DEFAULT_WS_URL).replace(/\/+$/, '');
+    this.apiKey = key ?? '';
+    this.paysPerCall = !key && Boolean(options.payments);
+    // Environment fallbacks matter for wrappers that cannot pass options, such
+    // as an MCP server, where the only configuration channel is the environment.
+    this.baseUrl = (options.baseUrl ?? env?.CABALSPY_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.wsUrl = (options.wsUrl ?? env?.CABALSPY_WS_URL ?? DEFAULT_WS_URL).replace(/\/+$/, '');
     this.timeout = options.timeout ?? 30_000;
     this.maxRetries = options.maxRetries ?? 2;
     this.extraHeaders = options.headers ?? {};
@@ -306,7 +336,10 @@ export class CabalSpy {
         { code: 'no_fetch' },
       );
     }
-    this.fetchImpl = f.bind(globalThis);
+    // The payment layer is itself a fetch: it forwards the call, and on a 402 it
+    // signs, pays and retries. Everything above it — the retry logic, the error
+    // mapping, the resources — is unchanged and unaware that money moved.
+    this.fetchImpl = options.payments ?? f.bind(globalThis);
 
     this.system = new SystemResource(this);
     this.wallets = new WalletsResource(this);
@@ -353,7 +386,9 @@ export class CabalSpy {
           method,
           signal: controller.signal,
           headers: {
-            Authorization: `Bearer ${this.apiKey}`,
+            // Omitted when paying per call: an empty bearer token would be
+            // rejected before the server ever offers a price.
+            ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
             Accept: 'application/json',
             'User-Agent': `cabalspy-sdk/${SDK_VERSION}`,
             ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
