@@ -256,7 +256,7 @@ export interface CabalSpyOptions {
 
 const DEFAULT_BASE_URL = 'https://api.cabalspy.xyz/v1';
 const DEFAULT_WS_URL = 'wss://stream.cabalspy.xyz';
-const SDK_VERSION = '0.1.0';
+const SDK_VERSION = '0.2.1';
 
 type QueryValue = string | number | boolean | undefined | null;
 type Query = Record<string, QueryValue>;
