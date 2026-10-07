@@ -1,6 +1,6 @@
 {
   "name": "cabalspy",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "KOL and smart money wallet tracking API for Solana, Base, BNB Chain, Ethereum and Robinhood Chain. Realtime KOL trades, whale wallets, copy-trading signals, bundle detection, token holders and PnL over REST and WebSocket.",
   "keywords": [
     "cabalspy",
@@ -69,6 +69,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm,cjs --dts --clean",
     "typecheck": "tsc --noEmit",
+    "test": "node --test test.mjs",
     "prepublishOnly": "npm run typecheck && npm run build",
     "test:smoke": "node smoke-test.mjs",
     "test:conformance": "node validate.mjs",

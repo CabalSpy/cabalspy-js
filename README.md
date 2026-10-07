@@ -10,6 +10,31 @@ npm install cabalspy
 
 **What you can build with it:** copy-trading bots, KOL leaderboards, memecoin alert systems, wallet analytics dashboards, bundle and sniper detection, portfolio and PnL trackers.
 
+## Try it without signing up
+
+The public demo key works on every endpoint and the realtime gateway, no account needed:
+
+```ts
+import { CabalSpy } from 'cabalspy';
+
+const client = CabalSpy.demo();
+const kols = await client.wallets.list({ blockchain: 'solana', type: 'kol' });
+console.log(client.lastDemo?.remaining_today); // requests left today
+```
+
+Or with nothing but curl:
+
+```bash
+curl "https://demo-api.cabalspy.xyz/v1/wallets?blockchain=solana&type=kol"
+```
+
+- 20 requests per IP per UTC day, REST and WebSocket combined (each socket connection counts as one)
+- Data 15 minutes delayed, at most 5 rows per list, no pagination
+- WebSocket: 1 connection per IP, up to 3 subscriptions, closed after 30 minutes
+- A spent budget throws `DemoLimitError` with `.resetsInSeconds` and `.upgrade` links
+
+For real-time data, get a free test key with 1,000 requests a month at [apidashboard.cabalspy.xyz](https://apidashboard.cabalspy.xyz/), or pay per call with x402 via [`cabalspy-x402`](https://www.npmjs.com/package/cabalspy-x402).
+
 ## Quick start
 
 ```ts
@@ -231,6 +256,7 @@ try {
 | `InsufficientCreditsError` | 403 | `insufficient_credits` |
 | `NotFoundError` | 404 | `wallet_not_found`, `token_not_found` |
 | `RateLimitError` | 429 | `rate_limit_exceeded` |
+| `DemoLimitError` | 429 | `demo_limit_reached` (subclass of `RateLimitError`, not retried) |
 | `ServerError` | 5xx | `internal_error`, `service_unavailable` |
 | `ConnectionError` | – | network failure, timeout |
 
@@ -310,7 +336,7 @@ The SDK runs anywhere `fetch` exists, but your API key would be readable in a br
 
 ### Is there a free tier?
 
-Rate limits and credits are set per API key plan. See [docs.cabalspy.xyz](https://docs.cabalspy.xyz).
+Yes. `CabalSpy.demo()` needs no account (20 requests a day, 15 minutes delayed), and a free test key at [apidashboard.cabalspy.xyz](https://apidashboard.cabalspy.xyz/) gives 1,000 real-time requests a month. Paid limits and credits are per plan, see [docs.cabalspy.xyz](https://docs.cabalspy.xyz).
 
 ## Docs
 

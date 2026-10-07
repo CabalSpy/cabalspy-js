@@ -6,6 +6,9 @@
  *
  * Auth: Authorization: Bearer <API_KEY> (or ?api_key=).
  * Every authenticated request costs 10 credits.
+ *
+ * No key yet? CabalSpy.demo() uses the public demo key: 20 requests per IP per
+ * day, data 15 minutes delayed, at most 5 rows per list.
  */
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -90,6 +93,43 @@ export interface ApiResponse<T> {
   data: T;
   pagination?: Pagination;
   meta: ResponseMeta;
+  /** Present only on responses served with the public demo key. */
+  demo?: DemoInfo;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DEMO
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Public demo key. Works like a normal key on the REST API and the gateway,
+ * with limits: 20 requests per IP per UTC day shared between REST and
+ * WebSocket, data delayed by 15 minutes, at most 5 rows per list and no
+ * pagination. Use CabalSpy.demo() rather than passing it by hand.
+ */
+export const DEMO_API_KEY = 'demo';
+
+/** Where to go once the demo is not enough. */
+export interface DemoUpgradeLinks {
+  /** Free test key, 1,000 real-time requests per month. */
+  test_key: string;
+  /** Pay per call with x402, no account. See the cabalspy-x402 package. */
+  pay_per_call: string;
+  docs: string;
+}
+
+export const DEMO_UPGRADE: DemoUpgradeLinks = {
+  test_key: 'https://apidashboard.cabalspy.xyz/',
+  pay_per_call: 'https://www.cabalspy.xyz/x402/',
+  docs: 'https://docs.cabalspy.xyz',
+};
+
+/** Top-level `demo` block on every response served with the demo key. */
+export interface DemoInfo {
+  notice: string;
+  /** Requests left today for this IP. */
+  remaining_today: number;
+  upgrade: DemoUpgradeLinks;
 }
 
 export interface RateLimitInfo {
@@ -116,6 +156,8 @@ export interface ApiErrorBody {
   docs: string;
   parameter?: string;
   allowed?: unknown[];
+  /** Only on demo_limit_reached. */
+  resets_in_seconds?: number;
 }
 
 /** Base class for every error thrown by this SDK. */
@@ -172,6 +214,27 @@ export class RateLimitError extends CabalSpyError {
     this.retryAfter = opts.retryAfter ?? null;
   }
 }
+/**
+ * 429 — demo_limit_reached. The daily demo budget for this IP (or the global
+ * demo ceiling) is spent. Not retried: the budget resets at the next UTC day.
+ */
+export class DemoLimitError extends RateLimitError {
+  /** Seconds until the demo budget resets. */
+  readonly resetsInSeconds: number | null;
+  /** Free test key, pay per call and docs links. */
+  readonly upgrade: DemoUpgradeLinks;
+  constructor(
+    message: string,
+    opts: ConstructorParameters<typeof RateLimitError>[1] & {
+      resetsInSeconds?: number | null;
+      upgrade?: Partial<DemoUpgradeLinks>;
+    } = {},
+  ) {
+    super(message, opts);
+    this.resetsInSeconds = opts.resetsInSeconds ?? null;
+    this.upgrade = { ...DEMO_UPGRADE, ...opts.upgrade };
+  }
+}
 /** 5xx — internal_error / service_unavailable */
 export class ServerError extends CabalSpyError {}
 /** Network failure, timeout or aborted connection. */
@@ -185,6 +248,7 @@ function errorFromStatus(
   rateLimit: RateLimitInfo,
   retryAfter: number | null,
   fallbackMessage: string,
+  upgrade?: Partial<DemoUpgradeLinks>,
 ): CabalSpyError {
   const opts = {
     status,
@@ -205,6 +269,10 @@ function errorFromStatus(
       : new PermissionError(msg, opts);
   }
   if (status === 404) return new NotFoundError(msg, opts);
+  if (status === 429 && body?.code === 'demo_limit_reached') {
+    const resetsInSeconds = body.resets_in_seconds ?? retryAfter;
+    return new DemoLimitError(msg, { ...opts, retryAfter: retryAfter ?? resetsInSeconds, resetsInSeconds, upgrade });
+  }
   if (status === 429) return new RateLimitError(msg, { ...opts, retryAfter });
   if (status >= 500) return new ServerError(msg, opts);
   return new CabalSpyError(msg, opts);
@@ -256,7 +324,7 @@ export interface CabalSpyOptions {
 
 const DEFAULT_BASE_URL = 'https://api.cabalspy.xyz/v1';
 const DEFAULT_WS_URL = 'wss://stream.cabalspy.xyz';
-const SDK_VERSION = '0.2.1';
+const SDK_VERSION = '0.3.0';
 
 type QueryValue = string | number | boolean | undefined | null;
 type Query = Record<string, QueryValue>;
@@ -297,8 +365,14 @@ export class CabalSpy {
   /** True when requests are paid per call rather than authenticated by key. */
   readonly paysPerCall: boolean = false;
 
+  /** True when the client uses the public demo key. */
+  readonly isDemo: boolean = false;
+
   /** Rate limit state from the most recent request. */
   lastRateLimit: RateLimitInfo = { limit: null, remaining: null, reset: null };
+
+  /** The `demo` block of the most recent response, null outside the demo. */
+  lastDemo: DemoInfo | null = null;
 
   readonly system: SystemResource;
   readonly wallets: WalletsResource;
@@ -315,11 +389,13 @@ export class CabalSpy {
     if (!key && !options.payments) {
       throw new CabalSpyError(
         'Missing credentials. Pass { apiKey }, set CABALSPY_API_KEY, or pass { payments } ' +
-          'to pay per call with x402.',
+          'to pay per call with x402. To try it without signing up, use CabalSpy.demo(); ' +
+          `a free test key is at ${DEMO_UPGRADE.test_key}`,
         { code: 'missing_api_key' },
       );
     }
     this.apiKey = key ?? '';
+    this.isDemo = key === DEMO_API_KEY;
     this.paysPerCall = !key && Boolean(options.payments);
     // Environment fallbacks matter for wrappers that cannot pass options, such
     // as an MCP server, where the only configuration channel is the environment.
@@ -348,6 +424,20 @@ export class CabalSpy {
     this.signals = new SignalsResource(this);
     this.analytics = new AnalyticsResource(this);
     this.bundle = new BundleResource(this);
+  }
+
+  /**
+   * Client on the public demo key, no signup needed.
+   *
+   *   const client = CabalSpy.demo();
+   *   await client.wallets.list({ blockchain: 'solana', type: 'kol' });
+   *
+   * 20 requests per IP per UTC day (REST and WebSocket combined), data delayed
+   * by 15 minutes, at most 5 rows per list. A spent budget throws
+   * DemoLimitError. For real-time data get a free test key or pay per call.
+   */
+  static demo(options: Omit<CabalSpyOptions, 'apiKey' | 'payments'> = {}): CabalSpy {
+    return new CabalSpy({ ...options, apiKey: DEMO_API_KEY });
   }
 
   /** GET returning the full envelope: data, pagination, meta and rate limit headers. */
@@ -428,7 +518,10 @@ export class CabalSpy {
       if (!res.ok) {
         const errBody = (parsed as { error?: ApiErrorBody } | null)?.error ?? null;
         const retryAfter = parseIntHeader(res.headers, 'Retry-After');
-        const error = errorFromStatus(res.status, errBody, rateLimit, retryAfter, `HTTP ${res.status} on ${method} ${path}`);
+        const upgrade = (parsed as { upgrade?: Partial<DemoUpgradeLinks> } | null)?.upgrade;
+        const error = errorFromStatus(
+          res.status, errBody, rateLimit, retryAfter, `HTTP ${res.status} on ${method} ${path}`, upgrade,
+        );
 
         if (isRetryable(error) && attempt < this.maxRetries) {
           lastError = error;
@@ -445,6 +538,7 @@ export class CabalSpy {
       }
 
       const env = parsed as ApiResponse<T>;
+      this.lastDemo = env.demo ?? null;
       return { ...env, rateLimit, status: res.status };
     }
 
@@ -483,6 +577,8 @@ export class CabalSpy {
 }
 
 function isRetryable(err: CabalSpyError): boolean {
+  // The demo budget resets daily, so retrying only burns time.
+  if (err instanceof DemoLimitError) return false;
   return err instanceof RateLimitError || err instanceof ServerError || err instanceof ConnectionError;
 }
 
@@ -1316,6 +1412,15 @@ export class CabalSpyRealtime {
       pingInterval: options.pingInterval ?? 25_000,
       WebSocketImpl: options.WebSocketImpl,
     };
+  }
+
+  /**
+   * Realtime client on the public demo key: 1 connection per IP, at most 3
+   * subscriptions, events 15 minutes late, session closed after 30 minutes.
+   * Each connection counts as one request against the daily demo budget.
+   */
+  static demo(options: RealtimeOptions = {}, wsUrl: string = DEFAULT_WS_URL): CabalSpyRealtime {
+    return new CabalSpyRealtime(wsUrl.replace(/\/+$/, ''), DEMO_API_KEY, options);
   }
 
   /**
