@@ -2,7 +2,7 @@
 
 Official TypeScript client for the **CabalSpy API**: a multichain **KOL wallet tracking API** covering **Solana, Base, BNB Chain, Ethereum and Robinhood Chain**.
 
-Track what Key Opinion Leaders, smart money wallets and whales are actually buying — in real time, with PnL, holder data, cluster signals and bundle detection. Full v1 REST coverage plus six WebSocket streams.
+Track what Key Opinion Leaders, smart money wallets and whales are actually buying — in real time, with PnL, holder data, cluster signals, bundle detection and our curated calls. Full v1 REST coverage plus seven WebSocket streams.
 
 ```bash
 npm install cabalspy
@@ -61,6 +61,11 @@ const signals = await client.signals.list({
   min_wallets: 5,
   hours: 1,
 });
+
+// Curated calls (the ones posted in the CabalSpy Discord) and how they performed
+const calls = await client.calls.list({ blockchain: 'solana', tier: ['good', 'moderate'] });
+const stats = await client.calls.stats({ period: '30d' });
+console.log(stats.totals.hit_rate['2x'], '% of calls reached 2x within 24 h');
 ```
 
 ## Realtime
@@ -75,6 +80,7 @@ const rt = client.realtime({ WebSocketImpl: WebSocket });
 rt.on('position_update', (msg) => console.log('trade', msg.data));
 rt.on('signal',          (msg) => console.log('signal', msg.data));
 rt.on('kol_bundle',      (msg) => console.log('bundle', msg.data));
+rt.on('call',            (msg) => console.log('call', msg.data.tier_label, msg.data.token.symbol));
 
 await rt.connect();
 
@@ -85,6 +91,7 @@ rt.subscribe({
   blockchain: 'solana',
   kol: { min_buy: 2, entry_at: [3, 5, 10], exit_at: [2, 0] },
 });
+rt.subscribe({ stream: 'call', blockchain: 'solana', tiers: ['good'] }); // or omit blockchain for every chain
 ```
 
 ## Chain coverage
@@ -215,6 +222,18 @@ Windows accept `seconds`, `minutes` or `hours`; values above the cap are clamped
 
 Setting any gated filter (`kol`, `smart`, `kol_min_buy`, `kol_exit`, `include_wallets`, `min_win_rate`,
 `min_token_age`, …) switches the server into gated mode with an AND gate across types.
+
+### Calls
+
+| Method | Endpoint |
+|---|---|
+| `calls.list({ blockchain?, tier?, since?, until?, limit?, cursor? })` | `GET /v1/calls` |
+| `calls.iterate({ ... })` | every page of `GET /v1/calls` |
+| `calls.stats({ period?, blockchain?, tier? })` | `GET /v1/calls/stats` |
+
+- Chains: `solana`, `bnb`, `eth`, `rh` (no calls on `base`)
+- Tiers: `gamble`, `moderate`, `good`, `big`, `whale` (`big` and `whale` on Solana only)
+- `performance.status` is `pending` for about two days, until the call has been measured over 24 h
 
 ### Bundles
 

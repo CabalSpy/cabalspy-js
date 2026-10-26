@@ -324,7 +324,7 @@ export interface CabalSpyOptions {
 
 const DEFAULT_BASE_URL = 'https://api.cabalspy.xyz/v1';
 const DEFAULT_WS_URL = 'wss://stream.cabalspy.xyz';
-const SDK_VERSION = '0.3.0';
+const SDK_VERSION = '0.4.0';
 
 type QueryValue = string | number | boolean | undefined | null;
 type Query = Record<string, QueryValue>;
@@ -381,6 +381,7 @@ export class CabalSpy {
   readonly signals: SignalsResource;
   readonly analytics: AnalyticsResource;
   readonly bundle: BundleResource;
+  readonly calls: CallsResource;
 
   constructor(options: CabalSpyOptions = {}) {
     const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env;
@@ -424,6 +425,7 @@ export class CabalSpy {
     this.signals = new SignalsResource(this);
     this.analytics = new AnalyticsResource(this);
     this.bundle = new BundleResource(this);
+    this.calls = new CallsResource(this);
   }
 
   /**
@@ -1243,11 +1245,168 @@ export class BundleResource extends Resource {
   }
 }
 
+// ── Calls ─────────────────────────────────────────────────────────────────
+
+/** Chains with curated calls. Base has none. */
+export const CALL_CHAINS = ['solana', 'bnb', 'eth', 'rh'] as const;
+export type CallChain = (typeof CALL_CHAINS)[number];
+
+/** big and whale exist on solana only. */
+export const CALL_TIERS = ['gamble', 'moderate', 'good', 'big', 'whale'] as const;
+export type CallTier = (typeof CALL_TIERS)[number];
+
+export interface CallWallet {
+  address: string;
+  type: 'kol' | 'smart';
+  /** Profile name, empty when unknown. */
+  name: string;
+  amount_native: number | null;
+  bought_at: string | null;
+}
+
+export interface CallPerformance {
+  /** pending: younger than about two days, not measured yet. */
+  status: 'pending' | 'ok' | 'no_data' | 'not_evaluated';
+  /** Highest price within 24 h after the call, divided by the price at the call. */
+  peak_multiple: number | null;
+  peak_market_cap: number | null;
+  minutes_to_peak: number | null;
+  /** Price 24 h after the call, divided by the price at the call. */
+  close_24h_multiple: number | null;
+  evaluated_at: string | null;
+}
+
+export interface Call {
+  /** Stable id, the same in REST and on the call stream. */
+  call_id: string;
+  blockchain: CallChain;
+  tier: CallTier;
+  /** As shown in Discord, for example 'Moderate Gamble'. */
+  tier_label: string;
+  called_at: string;
+  token: { mint: string; symbol: string; name: string; logo: string | null };
+  /** USD. */
+  market_cap_at_call: number | null;
+  trigger: {
+    kol_count: number;
+    smart_count: number;
+    native_symbol: Currency;
+    total_native: number | null;
+    /** Empty on Big Token calls, which carry counts only. */
+    wallets: CallWallet[];
+  };
+  /** Trading and chart links. Solana calls include terminal, the CabalSpy Terminal page. */
+  links: Record<string, string>;
+  /** REST only. The call stream sends calls before they can be measured. */
+  performance?: CallPerformance;
+}
+
+export interface CallsParams {
+  blockchain?: CallChain | CallChain[];
+  tier?: CallTier | CallTier[];
+  /** ISO 8601 or Unix seconds/milliseconds. */
+  since?: string | number;
+  until?: string | number;
+  /** 1–200. Default: 50 */
+  limit?: number;
+  cursor?: string;
+}
+
+export interface CallStatsParams {
+  /** Default: 7d */
+  period?: '1d' | '7d' | '30d' | '90d';
+  blockchain?: CallChain | CallChain[];
+  tier?: CallTier | CallTier[];
+}
+
+export interface CallStatsBlock {
+  calls: number;
+  evaluated: number;
+  pending: number;
+  no_data: number;
+  not_evaluated: number;
+  /** Percent of evaluated calls, null when nothing was evaluated. */
+  hit_rate: { '2x': number | null; '5x': number | null; '10x': number | null };
+  median_peak_multiple: number | null;
+  median_minutes_to_peak: number | null;
+}
+
+export interface CallStatsResponse {
+  period: '1d' | '7d' | '30d' | '90d';
+  window: { from: string; to: string };
+  method: string;
+  totals: CallStatsBlock;
+  chains: Partial<Record<CallChain, CallStatsBlock & { tiers: Partial<Record<CallTier, CallStatsBlock>> }>>;
+  best_calls: Array<{
+    call_id: string;
+    blockchain: CallChain;
+    tier: CallTier;
+    symbol: string;
+    mint: string;
+    called_at: string;
+    market_cap_at_call: number | null;
+    peak_multiple: number;
+  }>;
+}
+
+function assertChoices(value: string | readonly string[] | undefined, allowed: readonly string[], parameter: string): string | undefined {
+  if (value === undefined) return undefined;
+  const list = typeof value === 'string' ? value.split(',') : [...value];
+  const bad = list.map((v) => v.trim()).filter((v) => v && !allowed.includes(v));
+  if (bad.length) {
+    throw new BadRequestError(`Unknown ${parameter} '${bad[0]}'`, {
+      code: 'invalid_parameter',
+      parameter,
+      allowed: [...allowed],
+    });
+  }
+  return list.join(',');
+}
+
+function callsQuery(params: CallsParams | CallStatsParams): Query {
+  const q: Query = { ...(params as Record<string, QueryValue>) };
+  q.blockchain = assertChoices(params.blockchain, CALL_CHAINS, 'blockchain');
+  q.tier = assertChoices(params.tier, CALL_TIERS, 'tier');
+  return q;
+}
+
+/**
+ * The curated CabalSpy calls, the same ones posted in Discord.
+ * For calls as they happen, subscribe to { stream: 'call' } on the realtime client.
+ */
+export class CallsResource extends Resource {
+  /** GET /v1/calls — newest first, with 24 h performance. */
+  list(params: CallsParams = {}): Promise<Call[]> {
+    return this.client.get<Call[]>('/calls', callsQuery(params));
+  }
+
+  /** Like list(), with pagination (next_cursor) and meta. */
+  listRaw(params: CallsParams = {}): Promise<Envelope<Call[]>> {
+    return this.client.getRaw<Call[]>('/calls', callsQuery(params));
+  }
+
+  /** Walks every page: for await (const call of client.calls.iterate({ tier: 'good' })) */
+  async *iterate(params: CallsParams = {}, maxPages = 100): AsyncGenerator<Call, void, void> {
+    let cursor = params.cursor;
+    for (let i = 0; i < maxPages; i++) {
+      const page = await this.listRaw({ ...params, cursor });
+      for (const call of page.data) yield call;
+      cursor = page.pagination?.next_cursor ?? undefined;
+      if (!page.pagination?.has_more || !cursor) return;
+    }
+  }
+
+  /** GET /v1/calls/stats — hit rates per chain and tier. */
+  stats(params: CallStatsParams = {}): Promise<CallStatsResponse> {
+    return this.client.get<CallStatsResponse>('/calls/stats', callsQuery(params));
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //  REALTIME (WEBSOCKET GATEWAY)
 // ═══════════════════════════════════════════════════════════════════════════
 
-export type StreamName = 'tx' | 'count' | 'signal' | 'bundle' | 'holder' | 'balance';
+export type StreamName = 'tx' | 'count' | 'signal' | 'bundle' | 'holder' | 'balance' | 'call';
 
 export interface GatewayEnvelope<T = unknown> {
   success: boolean;
@@ -1343,6 +1502,18 @@ export interface BalanceSubscription<C extends Chain = Chain> {
 }
 
 /**
+ * call: the curated CabalSpy calls, the moment they go to Discord. Event: call
+ * (data is a Call without performance).
+ */
+export interface CallSubscription {
+  stream: 'call';
+  /** '*' for every chain. Default: '*' */
+  blockchain?: CallChain | '*';
+  /** Default: every tier. */
+  tiers?: CallTier[];
+}
+
+/**
  * Distributed across every chain so the chain/type pairing is enforced inside
  * subscribe() too. Without the mapped type, WalletTypeFor<Chain> would collapse
  * into the union of all types and { blockchain: 'base', type: 'whale' } would
@@ -1353,6 +1524,7 @@ export type Subscription =
   | CountSubscription
   | SignalSubscription
   | BundleSubscription
+  | CallSubscription
   | { [C in Chain]: HolderSubscription<C> }[Chain]
   | { [C in Chain]: BalanceSubscription<C> }[Chain];
 
@@ -1426,7 +1598,7 @@ export class CabalSpyRealtime {
   /**
    * Registers an event handler. Gateway events:
    *   position_update | wallet_count | signal | kol_bundle | holder_update |
-   *   balance_update | init
+   *   balance_update | init | call
    * SDK events: 'open' | 'close' | 'error' | 'ack' | 'message'
    */
   on<T = unknown>(event: string, handler: Handler<T>): this {
@@ -1593,9 +1765,11 @@ export class CabalSpyRealtime {
   subscribe(sub: Subscription): this {
     validateSubscription(sub);
     // bundle is Solana only, so send it explicitly rather than relying on
-    // the server default.
+    // the server default. call defaults to every chain.
     const normalized: Subscription =
-      sub.stream === 'bundle' ? ({ ...sub, blockchain: 'solana' } as Subscription) : sub;
+      sub.stream === 'bundle' ? ({ ...sub, blockchain: 'solana' } as Subscription)
+        : sub.stream === 'call' ? ({ ...sub, blockchain: sub.blockchain ?? '*' } as Subscription)
+        : sub;
     this.subs.set(CabalSpyRealtime.key(normalized), normalized);
     this.send({ op: 'subscribe', ...normalized });
     return this;
@@ -1660,6 +1834,14 @@ function validateSubscription(sub: Subscription): void {
         parameter: 'mc_interval',
       });
     }
+    return;
+  }
+
+  if (sub.stream === 'call') {
+    if (sub.blockchain !== undefined && sub.blockchain !== '*') {
+      assertChoices(sub.blockchain, CALL_CHAINS, 'blockchain');
+    }
+    if (sub.tiers !== undefined) assertChoices(sub.tiers, CALL_TIERS, 'tiers');
     return;
   }
 

@@ -135,3 +135,66 @@ test('CabalSpyRealtime.demo() connects with the demo key', async () => {
   assert.equal(opened, 'wss://stream.cabalspy.xyz/?apiKey=demo');
   rt.close();
 });
+
+const callsBody = {
+  success: true,
+  data: [{ call_id: 'c_1', blockchain: 'solana', tier: 'good', tier_label: 'Good Token' }],
+  pagination: { limit: 1, total: 2, has_more: true, next_cursor: 'abc' },
+  meta: { request_id: 'r1', cached: false, cache_age_seconds: 0, version: 'v1', timestamp: '' },
+};
+
+test('calls.list() joins chains and tiers into the query', async () => {
+  const fetch = mockFetch({ body: callsBody });
+  const client = new CabalSpy({ apiKey: 'k', fetch });
+  const calls = await client.calls.list({ blockchain: ['solana', 'bnb'], tier: 'good', limit: 1 });
+  assert.equal(calls[0].call_id, 'c_1');
+  const url = new URL(fetch.calls[0].url);
+  assert.equal(url.pathname, '/v1/calls');
+  assert.equal(url.searchParams.get('blockchain'), 'solana,bnb');
+  assert.equal(url.searchParams.get('tier'), 'good');
+});
+
+test('calls.list() rejects an unknown tier before any request', async () => {
+  const fetch = mockFetch({ body: callsBody });
+  const client = new CabalSpy({ apiKey: 'k', fetch });
+  assert.throws(() => client.calls.list({ tier: ['good', 'nope'] }), (err) => err.parameter === 'tier');
+  assert.equal(fetch.calls.length, 0);
+});
+
+test('calls.iterate() follows next_cursor', async () => {
+  const last = { ...callsBody, data: [{ call_id: 'c_2' }], pagination: { limit: 1, total: 2, has_more: false, next_cursor: null } };
+  const fetch = mockFetch({ body: callsBody }, { body: last });
+  const client = new CabalSpy({ apiKey: 'k', fetch });
+  const ids = [];
+  for await (const call of client.calls.iterate({ limit: 1 })) ids.push(call.call_id);
+  assert.deepEqual(ids, ['c_1', 'c_2']);
+  assert.equal(new URL(fetch.calls[1].url).searchParams.get('cursor'), 'abc');
+});
+
+test('calls.stats() calls /v1/calls/stats', async () => {
+  const fetch = mockFetch({ body: { ...callsBody, data: { period: '30d' } } });
+  const client = new CabalSpy({ apiKey: 'k', fetch });
+  const stats = await client.calls.stats({ period: '30d', blockchain: 'eth' });
+  assert.equal(stats.period, '30d');
+  const url = new URL(fetch.calls[0].url);
+  assert.equal(url.pathname, '/v1/calls/stats');
+  assert.equal(url.searchParams.get('period'), '30d');
+});
+
+test('the call stream defaults to every chain and validates tiers', async () => {
+  const sent = [];
+  class FakeWS {
+    constructor() {
+      this.readyState = 1;
+      queueMicrotask(() => this.onopen?.({}));
+    }
+    send(m) { sent.push(JSON.parse(m)); }
+    close() {}
+  }
+  const rt = new CabalSpyRealtime('wss://x', 'k', { WebSocketImpl: FakeWS, pingInterval: 0, reconnect: false });
+  await rt.connect();
+  rt.subscribe({ stream: 'call', tiers: ['good'] });
+  assert.deepEqual(sent.at(-1), { op: 'subscribe', stream: 'call', tiers: ['good'], blockchain: '*' });
+  assert.throws(() => rt.subscribe({ stream: 'call', blockchain: 'base' }), (err) => err.parameter === 'blockchain');
+  rt.close();
+});
