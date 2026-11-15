@@ -198,3 +198,39 @@ test('the call stream defaults to every chain and validates tiers', async () => 
   assert.throws(() => rt.subscribe({ stream: 'call', blockchain: 'base' }), (err) => err.parameter === 'blockchain');
   rt.close();
 });
+
+const txBody = (cursor) => ({
+  success: true,
+  data: { token: { mint: 'm' }, transactions: [{ tx_signature: cursor ?? 'last' }] },
+  pagination: { limit: 1, has_more: Boolean(cursor), next_cursor: cursor },
+  meta: { request_id: 'r1', cached: false, cache_age_seconds: 0, version: 'v1', timestamp: '' },
+});
+
+test('tokens.transactions() passes since and cursor', async () => {
+  const fetch = mockFetch({ body: txBody(null) });
+  const client = new CabalSpy({ apiKey: 'k', fetch });
+  await client.tokens.transactions({ blockchain: 'solana', mint: 'm', since: '2026-11-04T00:00:00Z', limit: 50, cursor: 'c1' });
+  const url = new URL(fetch.calls[0].url);
+  assert.equal(url.pathname, '/v1/tokens/transactions');
+  assert.equal(url.searchParams.get('since'), '2026-11-04T00:00:00Z');
+  assert.equal(url.searchParams.get('cursor'), 'c1');
+  assert.equal(url.searchParams.get('limit'), '50');
+});
+
+test('tokens.iterateTransactions() follows next_cursor', async () => {
+  const fetch = mockFetch({ body: txBody('c2') }, { body: txBody(null) });
+  const client = new CabalSpy({ apiKey: 'k', fetch });
+  const pages = [];
+  for await (const page of client.tokens.iterateTransactions({ blockchain: 'solana', mint: 'm', limit: 1 })) pages.push(page);
+  assert.equal(pages.length, 2);
+  assert.equal(new URL(fetch.calls[1].url).searchParams.get('cursor'), 'c2');
+});
+
+test('tokens.holders() passes cursor', async () => {
+  const fetch = mockFetch({ body: txBody(null) });
+  const client = new CabalSpy({ apiKey: 'k', fetch });
+  await client.tokens.holdersRaw({ blockchain: 'bnb', mint: 'm', limit: 10, cursor: 'h1' });
+  const url = new URL(fetch.calls[0].url);
+  assert.equal(url.pathname, '/v1/tokens/holders');
+  assert.equal(url.searchParams.get('cursor'), 'h1');
+});

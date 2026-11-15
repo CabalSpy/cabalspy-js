@@ -189,12 +189,24 @@ defaults to 500 and caps at 1000. Batch requests take at most 100 addresses.
 
 | Method | Endpoint |
 |---|---|
-| `tokens.transactions({ blockchain, mint, type?, limit? })` | `GET /v1/tokens/transactions` |
+| `tokens.transactions({ blockchain, mint, type?, limit?, cursor?, since? })` | `GET /v1/tokens/transactions` |
+| `tokens.iterateTransactions({ ... })` | follows `next_cursor` page by page |
 | `tokens.stats({ blockchain, mint, type? })` | `GET /v1/tokens/stats` |
-| `tokens.holders({ blockchain, mint, type?, limit? })` | `GET /v1/tokens/holders` |
+| `tokens.holders({ blockchain, mint, type?, limit?, cursor? })` | `GET /v1/tokens/holders` |
 | `tokens.batch({ blockchain, type, mints, fields? })` | `POST /v1/tokens/batch` |
 
 Omitting `type` merges all wallet types of that chain. Batch takes at most 100 mints.
+
+Market cap and price are filled on every chain; `market_cap_source` says whether the value is live
+or taken from the last tracked trade.
+
+To keep a chart or trade tape current, poll with `since` set to the `created_at` of the newest trade
+you already have. A poll that finds no new trade costs 0 credits. The bound is inclusive, so
+deduplicate by `tx_signature`:
+
+```ts
+const res = await cabalspy.tokens.transactions({ blockchain: 'solana', mint, since: lastCreatedAt });
+```
 
 ### Transactions / feed
 

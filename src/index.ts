@@ -324,7 +324,7 @@ export interface CabalSpyOptions {
 
 const DEFAULT_BASE_URL = 'https://api.cabalspy.xyz/v1';
 const DEFAULT_WS_URL = 'wss://stream.cabalspy.xyz';
-const SDK_VERSION = '0.4.0';
+const SDK_VERSION = '0.5.0';
 
 type QueryValue = string | number | boolean | undefined | null;
 type Query = Record<string, QueryValue>;
@@ -882,6 +882,20 @@ export interface TokenParams<C extends Chain = Chain> {
   type?: WalletTypeFor<C>;
 }
 
+export interface TokenHoldersParams<C extends Chain = Chain> extends TokenParams<C> {
+  limit?: number;
+  /** next_cursor from the previous page, sent with the same limit. */
+  cursor?: string;
+}
+
+export interface TokenTransactionsParams<C extends Chain = Chain> extends TokenHoldersParams<C> {
+  /**
+   * Only trades at or after this time: Unix seconds, Unix milliseconds or an
+   * ISO 8601 timestamp in UTC. Inclusive, so deduplicate by tx_signature.
+   */
+  since?: string | number;
+}
+
 export type TokenBatchField =
   | 'token'
   | 'total_holders'
@@ -901,23 +915,33 @@ export interface TokensBatchParams<C extends Chain = Chain> {
 export const BATCH_MAX_MINTS = 100;
 
 export class TokensResource extends Resource {
-  /** GET /v1/tokens/transactions — trades by tracked wallets in this token. */
-  transactions<C extends Chain>(params: TokenParams<C> & { limit?: number }): Promise<unknown> {
+  /**
+   * GET /v1/tokens/transactions — trades by tracked wallets in this token,
+   * newest first. Pass `since` (the `created_at` of the newest trade you
+   * already have) to poll for new trades only: a poll that finds nothing new
+   * costs 0 credits. The bound is inclusive, so deduplicate by `tx_signature`.
+   */
+  transactions<C extends Chain>(params: TokenTransactionsParams<C>): Promise<unknown> {
     assertChainType(params.blockchain, params.type);
     return this.client.get('/tokens/transactions', { ...params });
   }
 
-  transactionsRaw<C extends Chain>(params: TokenParams<C> & { limit?: number }): Promise<Envelope<unknown>> {
+  /** Like transactions(), with pagination (next_cursor) and meta. */
+  transactionsRaw<C extends Chain>(params: TokenTransactionsParams<C>): Promise<Envelope<unknown>> {
     assertChainType(params.blockchain, params.type);
     return this.client.getRaw('/tokens/transactions', { ...params });
   }
 
+  /** Follows next_cursor through all transactions of this token and yields pages. */
+  iterateTransactions<C extends Chain>(params: TokenTransactionsParams<C>): AsyncGenerator<Envelope<unknown>, void, void> {
+    assertChainType(params.blockchain, params.type);
+    return this.client.pages((cursor) => this.transactionsRaw({ ...params, cursor: cursor ?? params.cursor }));
+  }
+
   /**
-   * GET /v1/tokens/stats — aggregated token statistics.
-   *
-   * Note: this endpoint does not pass the native price into its market cap
-   * builder, so market_cap_usd, price_usd and sol_price_usd come back null even
-   * on Solana. tokens/holders returns them populated.
+   * GET /v1/tokens/stats — aggregated token statistics, with market cap and
+   * price on every chain. `market_cap_source` says whether the value is live
+   * or taken from the last tracked trade.
    */
   stats<C extends Chain>(params: TokenParams<C>): Promise<TokenStatsResponse> {
     assertChainType(params.blockchain, params.type);
@@ -925,9 +949,15 @@ export class TokensResource extends Resource {
   }
 
   /** GET /v1/tokens/holders — tracked holders, sorted by balance. */
-  holders<C extends Chain>(params: TokenParams<C> & { limit?: number }): Promise<unknown> {
+  holders<C extends Chain>(params: TokenHoldersParams<C>): Promise<unknown> {
     assertChainType(params.blockchain, params.type);
     return this.client.get('/tokens/holders', { ...params });
+  }
+
+  /** Like holders(), with pagination (next_cursor) and meta. */
+  holdersRaw<C extends Chain>(params: TokenHoldersParams<C>): Promise<Envelope<unknown>> {
+    assertChainType(params.blockchain, params.type);
+    return this.client.getRaw('/tokens/holders', { ...params });
   }
 
   /** POST /v1/tokens/batch — up to 100 mints in a single request. */
